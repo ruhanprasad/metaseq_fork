@@ -40,6 +40,16 @@ from metaseq.distributed import fsdp_enable_wrap, fsdp_wrap, utils as distribute
 from metaseq.file_io import PathManager
 from metaseq.logging import meters, metrics, progress_bar
 from metaseq.trainer import Trainer
+#from hanging_threads import start_monitoring
+#start_monitoring(seconds_frozen=30, test_interval=100)
+
+os.environ["LOCAL_RANK"] = os.environ["OMPI_COMM_WORLD_LOCAL_RANK"]
+os.environ["RANK"] = os.environ["OMPI_COMM_WORLD_RANK"]
+os.environ["WORLD_SIZE"] = os.environ["OMPI_COMM_WORLD_SIZE"]
+
+os.environ["MODEL_PARALLEL_SIZE"]=""
+os.environ["NUM_PARAMS"]=""
+os.environ["TOKENS_PER_GPU"]=""
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -114,6 +124,7 @@ def main(cfg: DictConfig) -> None:
     # Print args
     logger.info(cfg)
 
+    print(cfg.distributed_training.task_ddp_backend)
     # Setup task, e.g., translation, language modeling, etc.
     if cfg.distributed_training.task_ddp_backend == "fully_sharded":
         # As the task is non-trainable, we switch flags to more optimized ones.
@@ -138,7 +149,6 @@ def main(cfg: DictConfig) -> None:
 
     # Build model and criterion
     assert cfg.criterion, "Please specify criterion to train a model"
-
     if cfg.distributed_training.ddp_backend == "fully_sharded":
         with fsdp_enable_wrap(
             cfg.distributed_training,
@@ -168,6 +178,11 @@ def main(cfg: DictConfig) -> None:
             ),
         )
     )
+
+    os.environ["NUM_PARAMS"] = str(sum(getattr(p, "_orig_size", p).numel() for p in model.parameters()))
+    os.environ["MODEL_PARALLEL_SIZE"] = str(cfg.common.model_parallel_size)
+
+
     logger.info(metrics.get_nvidia_smi_gpu_memory_stats_str())
 
     # Load valid dataset (we load training data below, based on the latest checkpoint)
@@ -193,6 +208,7 @@ def main(cfg: DictConfig) -> None:
         )
     )
     logger.info(metrics.get_nvidia_smi_gpu_memory_stats_str())
+    os.environ["TOKENS_PER_GPU"]=str(cfg.dataset.batch_size * 2048)
 
     # Load the latest checkpoint if one is available and restore the
     # corresponding train iterator
@@ -239,6 +255,10 @@ def get_skip_batches(to_skip):
 def train(
     cfg: DictConfig, trainer: Trainer, task: tasks.BaseTask, epoch_itr
 ) -> Tuple[List[Optional[float]], bool]:
+
+    MODEL_PARALLEL_SIZE = int(os.environ["MODEL_PARALLEL_SIZE"])
+    NUM_PARAMS = int(os.environ["NUM_PARAMS"])
+    TOKENS_PER_GPU = int(os.environ["TOKENS_PER_GPU"])
     """Train the model for one epoch and return validation losses."""
     # Initialize data iterator
     itr = epoch_itr.next_epoch_itr(
@@ -298,10 +318,30 @@ def train(
     def train(
         samples,
     ):
+        start = time.time()  
         with metrics.aggregate("train_inner"):
             if update_freq == 1:
                 samples = [samples]
             log_output = trainer.train_step(samples)
+        end = time.time()
+        step_time = end - start
+        # Based on the formula in https://developer.nvidia.com/blog/scaling-language-model-training-to-a-trillion-parameters-using-megatron/
+        N = NUM_PARAMS# * MODEL_PARALLEL_SIZE
+        tflops_per_gpu = 8 * N * TOKENS_PER_GPU / step_time / 1e12 
+        
+        logger.info("TFLOPS/GPU: {}".format(tflops_per_gpu))
+        tokens_per_second = (TOKENS_PER_GPU * (int(os.environ["WORLD_SIZE"]) / MODEL_PARALLEL_SIZE)) / step_time
+        peak_theoretical_flops = (312 * 1e12) * int(os.environ["WORLD_SIZE"])
+        L = int(os.environ["NUM_LAYERS"])
+        H = int(os.environ["NUM_HEADS"])
+        Q = int(os.environ["HEAD_DIM"])
+        T = 2048
+        peak_theoretical_throughput = peak_theoretical_flops / (6*N*MODEL_PARALLEL_SIZE + 12*L*H*Q*T)
+
+        # Based on the formula in https://arxiv.org/pdf/2204.02311.pdf
+        MFU = (tokens_per_second / peak_theoretical_throughput) * 100
+
+        logger.info("Model FLOPS Utilization: {}%".format(MFU))
 
         if log_output is not None:  # not OOM, overflow, ...
             # log mid-epoch stats
@@ -450,6 +490,7 @@ def validate_and_save(
             f"Stopping training due to "
             f"num_updates: {num_updates} >= max_update: {max_update}"
         )
+        logger.info("Benchmark is complete!  Feel free to exit via Ctrl+C to skip saving model checkpoint")
 
     save_locally = (
         cfg.checkpoint.local_save_interval_updates > 0
@@ -854,6 +895,7 @@ def set_local_per_worker_env_variables():
         with open(os.path.join(env_dir, f"rank_{rank:04d}_{hostname}"), "w") as f:
             for key in sorted(os.environ.keys()):
                 f.write(f"{key}={os.environ[key]}\n")
+        print(savedir)
 
 
 def cli_main(
@@ -873,6 +915,7 @@ def cli_main(
         )
 
     distributed_utils.call_main(cfg, main)
+    #print(f"Print peak allocated memory: {torch.cuda.max_memory_allocated() / np.power(1024, 3)}") 
 
 
 if __name__ == "__main__":

@@ -16,7 +16,8 @@ from argparse import Namespace
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional
-
+import inspect
+#print(f"Inspect getfile: {inspect.getfile(smdistributed.dataparallel.torch.torch_smddp)}")
 import torch
 import torch.distributed as dist
 from omegaconf import open_dict
@@ -35,27 +36,30 @@ def is_master(cfg: DistributedTrainingConfig):
 
 
 def infer_init_method(cfg: DistributedTrainingConfig, force_distributed=False):
-    if cfg.distributed_init_method is not None:
+    """if cfg.distributed_init_method is not None:
         return
 
     if cfg.distributed_port > 0:
         # we can determine the init method automatically for Slurm
         _infer_slurm_init(cfg)
+        print("slurm init")
     elif all(
         key in os.environ
         for key in ["MASTER_ADDR", "MASTER_PORT", "WORLD_SIZE", "RANK", "LOCAL_RANK"]
     ):
         # support torch.distributed.launch
-        _infer_torch_distributed_launch_init(cfg)
-    elif cfg.distributed_world_size > 1 or force_distributed:
+        print("torhc distributed")"""
+    _infer_torch_distributed_launch_init(cfg)
+    """elif cfg.distributed_world_size > 1 or force_distributed:
         # fallback for single node with multiple GPUs
+        print("single node")
         _infer_single_node_init(cfg)
 
     if not cfg.distributed_no_spawn:
         with open_dict(cfg):
             cfg.distributed_num_procs = min(
                 torch.cuda.device_count(), cfg.distributed_world_size
-            )
+            )"""
 
 
 def _infer_torch_distributed_launch_init(cfg: DistributedTrainingConfig):
@@ -135,6 +139,11 @@ def distributed_init(cfg: MetaseqConfig):
                 cfg.distributed_training.distributed_init_method,
             )
         )
+        cfg.distributed_training.distributed_backend = os.environ["BACKEND"]
+        
+        if(cfg.distributed_training.distributed_backend == "smddp"):
+            import smdistributed.dataparallel.torch.torch_smddp
+
         dist.init_process_group(
             backend=cfg.distributed_training.distributed_backend,
             init_method=cfg.distributed_training.distributed_init_method,
@@ -201,6 +210,7 @@ def distributed_main(i, main, cfg: MetaseqConfig, kwargs):
         i = i + 1
     cfg.distributed_training.device_id = i
     if torch.cuda.is_available() and not cfg.common.cpu:
+        print(f"Rank: {os.environ['LOCAL_RANK']}, device_id: {cfg.distributed_training.device_id}")
         torch.cuda.set_device(cfg.distributed_training.device_id)
         # This is temporary way of making microsoft Tutel happy, as it reads the local rank from
         # the env. To make it work in cleaner way, we might need to change their interfaces to be
@@ -680,3 +690,4 @@ def _put_tensors_in_obj(obj: Any, tensors: List[torch.Tensor]) -> Any:
         return {_put_tensors_in_obj(v, tensors) for v in obj}
     else:
         return obj
+

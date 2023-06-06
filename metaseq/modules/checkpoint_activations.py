@@ -14,7 +14,7 @@ def checkpoint_wrapper(module, *args, **kwargs):
             "Cannot find fairscale.nn.misc.checkpoint_activations. "
             "Please install fairscale with: pip install fairscale"
         )
-
+    
     module = _checkpoint_wrapper(module, *args, **kwargs)
 
     if hasattr(module, "extra_repr"):

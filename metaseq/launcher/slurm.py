@@ -119,7 +119,7 @@ def run_setup(args, config, dry_run):
 
     # create save directory if it doesn't exist
     if not os.path.exists(save_dir):
-        if not dry_run(f"create directory: {save_dir}"):
+        if not dry_run(f"create directory: {save_dir}") and os.environ["OMPI_COMM_WORLD_RANK"]==0:
             os.makedirs(save_dir)
 
     return save_dir_key, save_dir
@@ -343,7 +343,7 @@ def gen_sbatch_command_and_str(
 
 
 def local_run(args, env, train_cmd, dry_run):
-    assert args.num_nodes == 1, "distributed training cannot be combined with --local"
+    #assert args.num_nodes == 1, "distributed training cannot be combined with --local"
     if not dry_run("start training locally"):
         if "CUDA_VISIBLE_DEVICES" not in env:
             env["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, range(args.num_gpus)))
@@ -474,7 +474,8 @@ def launch_train(args, grid, grid_product, dry_run, postprocess_hyperparams):
         if args.local:
             local_run(args, env, train_cmd, dry_run)
         else:
-            srun_cmd_str = srun_cmd_str + " &"
+            local_run(args, env, train_cmd, dry_run)
+            """srun_cmd_str = srun_cmd_str + " &"
             # build command
             if not args.salloc:
                 job_name = f"{args.prefix}.{save_dir_key}"
@@ -505,7 +506,7 @@ def launch_train(args, grid, grid_product, dry_run, postprocess_hyperparams):
             print("Launched {}".format(job_id))
         if hasattr(args, "tombstonable"):
             if args.tombstonable:
-                tombstones(job_id=job_id, base_dir=args.base_directory)
+                tombstones(job_id=job_id, base_dir=args.base_directory)"""
 
 
 def has_finished(save_dir):

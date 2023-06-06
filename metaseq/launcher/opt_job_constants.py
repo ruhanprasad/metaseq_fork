@@ -6,7 +6,6 @@
 from dataclasses import dataclass
 from enum import Enum
 
-
 @dataclass
 class Size:
     n_layers: int
@@ -79,7 +78,9 @@ DEFAULT_CPU_PER_TASK = {
     ComputeEnvs.AWS: 12,
     ComputeEnvs.FAIR: 10,
 }
-VALID_SUBSETS = [
+
+VALID_SUBSETS = ["pile_subset"]
+"""VALID_SUBSETS = [
     "BookCorpusFair",
     "CommonCrawl",
     "DM_Mathematics",
@@ -91,4 +92,4 @@ VALID_SUBSETS = [
     "Wikipedia_en",
     "redditflattened",
     "stories",
-]
+]"""

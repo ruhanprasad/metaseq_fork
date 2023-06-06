@@ -6,11 +6,12 @@
 import math
 
 import torch
-
+import logging
 from metaseq import metrics, utils
 from metaseq.criterions import BaseCriterion, register_criterion
 from metaseq.modules.megatron.mpu import vocab_parallel_cross_entropy
 
+logger = logging.getLogger(__name__)
 
 @register_criterion("vocab_parallel_cross_entropy")
 class VocabParallelCrossEntropyCriterion(BaseCriterion):
@@ -29,6 +30,7 @@ class VocabParallelCrossEntropyCriterion(BaseCriterion):
         has_pad = target.eq(self.padding_idx).any().item()
 
         net_output = model(**sample["net_input"])
+        
         loss = vocab_parallel_cross_entropy(net_output[0].float(), target)
         if has_pad:
             loss = loss * (target != self.padding_idx)
@@ -69,7 +71,7 @@ class VocabParallelCrossEntropyCriterion(BaseCriterion):
                     logging_output[f"{key}_norm"] = value.norm(p=2, dim=-1).sum(
                         dtype=torch.float32
                     )
-
+        
         return loss, sample_size, logging_output
 
     @staticmethod

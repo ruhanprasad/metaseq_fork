@@ -179,8 +179,10 @@ def _checkpointed_forward(
     *args: Any,
     **kwargs: Any,
 ) -> Any:
+    #if(torch.distributed.get_rank()==0):
+        #print(f"entering _checkpointed_forward {torch.cuda.memory_reserved()/(1024**3)}")
     module = weak_self()
-
+    
     # If gradients are disabled, just use original `.forward()` method directly.
     if not torch.is_grad_enabled() or thread_local.is_checkpointing_disabled:
         return original_forward(module, *args, **kwargs)
@@ -280,8 +282,9 @@ class CheckpointFunction(torch.autograd.Function):
         *args: Any,
         **kwargs: Any,
     ) -> Any:
+        #if(torch.distributed.get_rank() == 0):
+            #print(f"entering CheckpointFunction forward {torch.cuda.memory_reserved()/(1024**3)}")
         torch_checkpoint.check_backward_validity(args)
-
         ctx.run_function = run_function
         ctx.kwarg_keys = kwarg_keys
         ctx.fwd_rng_state = get_rng_state()
@@ -292,6 +295,7 @@ class CheckpointFunction(torch.autograd.Function):
             ctx.fwd_cuda_rng_state_tracker = mpu.get_cuda_rng_tracker().get_states()
         ctx.had_autocast_in_fwd = is_autocast_enabled()
 
+        
         tensor_inputs, packed_non_tensor_inputs = split_non_tensors(args)
         if parent_ctx_dict["offload"]:
             ctx.fwd_device = tuple(x.device for x in tensor_inputs)
@@ -299,11 +303,15 @@ class CheckpointFunction(torch.autograd.Function):
             tensor_inputs = tuple(x.to("cpu", non_blocking=True) for x in tensor_inputs)
         else:
             ctx.fwd_device, ctx.grad_requirements = None, None
+        
+        
 
         with torch.no_grad(), enable_checkpointing():
             unpacked_args, unpacked_kwargs = unpack_kwargs(kwarg_keys, args)
             outputs = run_function(*unpacked_args, **unpacked_kwargs)
             the_module = unpacked_args[0]
+
+        #torch.cuda.empty_cache()
         ctx.distribute_checkpointed_activations = (
             parent_ctx_dict["distribute_checkpointed_activations"]
             and ctx.is_model_parallel
@@ -342,7 +350,8 @@ class CheckpointFunction(torch.autograd.Function):
             # through *parent_ctx_dict* and returning the latter directly.
             outputs, packed_non_tensor_outputs = split_non_tensors(outputs)
             parent_ctx_dict["packed_non_tensor_outputs"] = packed_non_tensor_outputs
-
+        
+        #torch.cuda.empty_cache()
         return outputs
 
     @staticmethod
@@ -407,5 +416,5 @@ class CheckpointFunction(torch.autograd.Function):
         grads = tuple(
             inp.grad if isinstance(inp, torch.Tensor) else None for inp in inputs
         )
-
+        #torch.cuda.empty_cache()
         return (None, None, None, None) + grads

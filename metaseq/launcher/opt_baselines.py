@@ -9,6 +9,7 @@ This sweep script takes some additional optional arguments. See add_extra_option
 for more details.
 """
 import os
+import torch
 
 from metaseq.launcher.opt_job_constants import (
     TOTAL_TRAIN_TOKENS,
@@ -21,6 +22,10 @@ from metaseq.launcher.sweep import (
     get_env_from_args,
     main as sweep_main,
 )
+
+if os.environ["OMPI_COMM_WORLD_RANK"] == "0":
+    os.environ["NCCL_DEBUG"] = "INFO"
+    os.environ["NCCL_DEBUG_SUBSYS"] = "COLL"
 
 try:
     # internal logic denoting where data locations are
@@ -101,6 +106,9 @@ def get_grid(args):
 
     SEQ_LEN = 2048
     size = MODEL_SIZES[args.model_size]
+    os.environ["NUM_LAYERS"] = str(size.n_layers)
+    os.environ["NUM_HEADS"] = str(size.n_heads)
+    os.environ["HEAD_DIM"] = str(size.d_head)
     # updates = 300B tokens / 2048 seq_len / 1024 batchsize
 
     total_gpus = args.num_gpus * args.num_nodes
@@ -116,7 +124,8 @@ def get_grid(args):
         raise ValueError(
             "Total gpus (num_gpus * num_nodes) must be divisible by model parallel factor"
         )
-
+    batch_size = int((float(os.environ["BATCH_SIZE"]) * (1024**2)))
+    size.batch_size = batch_size
     total_gpus = (args.num_gpus * args.num_nodes) // size.model_parallel
     ddp_bsz = (size.batch_size // total_gpus) // SEQ_LEN
     total_updates = args.max_update
@@ -168,7 +177,7 @@ def get_grid(args):
         grid += [hyperparam("--profile")]
 
     no_save_params = args.no_save_dir
-    args.snapshot_code = True
+    #args.snapshot_code = True
 
     if not args.benchmark:
         grid += [
@@ -354,6 +363,6 @@ def cli_main():
         get_grid, postprocess_hyperparams, add_extra_options_func=add_extra_options_func
     )
 
-
 if __name__ == "__main__":
     cli_main()
+    

@@ -102,6 +102,11 @@ def fsdp_enable_wrap(
         compute_dtype = torch.bfloat16 if cfg.bf16 else torch.float16
     else:
         compute_dtype = torch.float32
+    if("ZERO_STAGE" in os.environ):
+        cfg.no_reshard_after_forward = True if os.environ["ZERO_STAGE"]=='2' else False
+        print("using ZeRO Stage: " + os.environ["ZERO_STAGE"])
+    else:
+        cfg.no_reshard_after_forward=False
     fsdp_config = {
         "process_group": group,
         "process_group_reduce_scatter": group,
