@@ -124,7 +124,7 @@ def get_grid(args):
         raise ValueError(
             "Total gpus (num_gpus * num_nodes) must be divisible by model parallel factor"
         )
-    batch_size = int((float(os.environ["BATCH_SIZE"]) * (1024**2)))
+    batch_size = SEQ_LEN * total_gpus * int(os.environ["BATCH_SIZE"])
     size.batch_size = batch_size
     total_gpus = (args.num_gpus * args.num_nodes) // size.model_parallel
     ddp_bsz = (size.batch_size // total_gpus) // SEQ_LEN
